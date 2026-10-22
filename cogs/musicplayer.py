@@ -5,6 +5,7 @@ from discord.ext import commands, tasks
 import asyncio
 import yt_dlp as ytdl
 import spotipy
+import random
 from spotipy.oauth2 import SpotifyClientCredentials
 
 #Making Spotify playing possible by it's API
@@ -187,7 +188,7 @@ class MusicPlayer(commands.Cog):
             raise commands.CheckFailure("A parancsot nem a megfelelő nevű csatornában hívták meg.")
 
     #Making play command, that can play music from YouTube and Spotify links, or search for a song by title.
-    @commands.command(name="play", help="Lejátszik egy számot vagy playlistet a megadott YouTube vagy Spotify linkről, vagy keres egy számot a megadott címmel.")
+    @commands.command(name="play", help="Lejátszik egy számot vagy playlistet a megadott YouTube vagy SoundCloud linkről, vagy keres egy számot a megadott címmel.")
     async def play(self , ctx, *, search: str):
         if not ctx.author.voice:
             return await ctx.send("❌ Csatlakoznod kell egy hangcsatornához a zene lejátszásához.", delete_after=20)
@@ -302,13 +303,98 @@ class MusicPlayer(commands.Cog):
 
             if not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
                 await self.play_next(ctx)
-                    
 
+    #Skip function        
+    @commands.command(name = 'skip', help= 'A következő dal lejátszása a sorban')
+    async def skip(self, ctx):
+        if not ctx.voice_client or not (ctx.voice_client.is_playing() or ctx.voice_client.is_paused()):
+            return await ctx.send("❌ Nincs lejátszás alatt álló zene, amit át lehetne ugrani.")
 
-        
+        self.loop[ctx.guild.id] = False
+        ctx.voice_client.stop()
+        await ctx.send("⏭️ **A dal átugorva!**")
 
+    #Pause function
+    @commands.command(name='pause', help= 'Megállítja a jelenleg lejátszott dalt')
+    async def pause(self, ctx):
+        if not ctx.voice_client or not ctx.voice_client.is_playing():
+            return await ctx.send("❌ Nincs lejátszás alatt álló zene, amit meg lehetne állítani.")
 
-    
+        ctx.voice_client.pause()
+        await ctx.send("⏸️ **A dal megállítva!**")
+
+    #Resume function
+    @commands.command(name='resume', aliases=['start', 'continue', 'cunt'], help='Folytatja a megállított dalt')
+    async def resume(self, ctx):
+        if not ctx.voice_client or not ctx.voice_client.is_paused():
+            return await ctx.send("❌ Nincs megállított zene, amit folytatni lehetne.")
+
+        ctx.voice_client.resume()
+        await ctx.send("▶️ **A dal folytatva!**")
+
+    #Stop function
+    @commands.command(name='stop', help='Megállítja a lejátszást és kiüríti a sort')
+    async def stop(self, ctx):
+        if not ctx.voice_client:
+            return await ctx.send("❌ A bot nincs csatlakozva egy hangcsatornához sem.")
+
+        guild_id = ctx.guild.id
+        self.get_queue(guild_id).clear()
+        self.loop[guild_id] = False
+        self.currently_playing.pop(guild_id, None)
+
+        if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+            ctx.voice_client.stop()
+
+        await ctx.voice_client.disconnect()
+        await ctx.send("⏹️ **Leállítottam a zenét, töröltem a sort és kiléptem.**")
+
+    #Loop function
+    @commands.command(name='loop', help='A jelenlegi dal ismétlésének ki/bekapcsolása')
+    async def loop(self, ctx):
+        guild_id = ctx.guild.id
+        state = self.loop[guild_id] = not self.loop.get(guild_id, False)
+        status_text = "BEKAPCSOLVA" if state else "KIKAPCSOLVA"
+        await ctx.send(f"🔁 **A dal ismétlése: {status_text}.**")
+
+    #Queue list function
+    @commands.command(name='queue', aliases=['q'], help= 'Megjeleníti a jelenlegi lejátszási sort')
+    async def queue_info(self, ctx):
+        guild_id = ctx.guild.id
+        queue = self.get_queue(guild_id)
+        current = self.currently_playing.get(guild_id)
+
+        if not current and not queue:
+            return await ctx.send("❌ A lejátszási sor üres.")
+
+        embed = discord.Embed(title="🎵 Lejátszási sor", color=discord.Color.green())
+
+        if current and ctx.voice_client and (ctx.voice_client.is_playing() or ctx.voice_client.is_paused()):
+            loop_status = "🔂 *(Ismétlés BE)*" if self.loop.get(guild_id, False) else ""
+            embed.add_field(name='▶️ Most szól:', value=f"**{current['title']}**{loop_status}", inline=False)
+
+        if queue:
+            song_list = "\n".join([f"**{i}.** {song['title']}" for i, song in enumerate(queue[:10], start=1)])
+            if len(queue) > 10:
+                song_list += f"\n... és még **{len(queue) - 10}** dal a sorban."
+            embed.add_field(name="📋 Következő zenék:", value=song_list, inline=False)
+        else:
+            embed.add_field(name="📋 Következő zenék:", value="*Nincs több zene a sorban.*", inline=False)
+
+        await ctx.send(embed=embed)
+
+    #Randomize Queue function
+    @commands.command(name='shuffle', aliases=['sh','random','r'], help='A lejátszási sor összekeverése')
+    async def shuffle(self,ctx):
+        guild_id = ctx.guild.id
+        queue = self.get_queue(guild_id)
+
+        if not queue:
+            return await ctx.send("❌ A lejátszási sor üres, nincs mit összekeverni.")
+
+        random.shuffle(queue)
+        await ctx.send("🔀 A lejátszási sor összekeverve!")
+
 async def setup(bot):
     await bot.add_cog(MusicPlayer(bot))
 
