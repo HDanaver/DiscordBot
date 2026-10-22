@@ -149,7 +149,7 @@ class MusicPlayer(commands.Cog):
             loop= asyncio.get_running_loop()
 
             if not webpage_url.startswith('http://') and not webpage_url.startswith('https://'):
-                search_data = await loop.run_in_executor(None, lambda: ytdl_search.extract_info(webpage_url, download=False))
+                search_data = await loop.run_in_executor(None, lambda: ytdl_search.extract_info(f"ytsearch:{webpage_url}", download=False))
                 if search_data and 'entries' in search_data and search_data['entries']:
                     first_video = search_data['entries'][0]
                     webpage_url = first_video.get('webpage_url') or f"https://www.youtube.com/watch?v={first_video.get('id')}"
@@ -186,7 +186,126 @@ class MusicPlayer(commands.Cog):
             await ctx.send("❌ A zene parancsokat csak olyan csatornában használhatod ami zene lejátszására van fenntartva.", delete_after=20)
             raise commands.CheckFailure("A parancsot nem a megfelelő nevű csatornában hívták meg.")
 
-    
+    #Making play command, that can play music from YouTube and Spotify links, or search for a song by title.
+    @commands.command(name="play", help="Lejátszik egy számot vagy playlistet a megadott YouTube vagy Spotify linkről, vagy keres egy számot a megadott címmel.")
+    async def play(self , ctx, *, search: str):
+        if not ctx.author.voice:
+            return await ctx.send("❌ Csatlakoznod kell egy hangcsatornához a zene lejátszásához.", delete_after=20)
+
+        channel = ctx.author.voice.channel
+        if not ctx.voice_client:
+            await channel.connect()
+        elif ctx.voice_client.channel != channel:
+            await ctx.voice_client.move_to(channel)
+
+        async with ctx.typing():
+            queue = self.get_queue(ctx.guild.id)
+            loop = asyncio.get_running_loop()
+
+        #Handle Spotify links
+            if "spotify.com" in search:
+                #Spotify playlist and album checking
+                if "playlist" in search or "album" in search:
+                    await ctx.send("🔄 Spotify playlist vagy album linket kaptam, feldolgozás...")
+                    spotify_tracks, error = await self.fetch_spotify_tracks(search)
+                    if error:
+                        await ctx.send(f"❌ Hiba történt a Spotify link feldolgozása közben: {error}", delete_after=20)
+                        return
+
+                    track_count = len(spotify_tracks)
+
+                    if track_count > 1:
+                        await ctx.send(f"❓ Ez a Spotify hivatkozás **{track_count}** dalt tartalmaz. Biztosan hozzá akarod adni a sorhoz? Írd be: **yes** vagy **no** (60 másodperced van).")
+
+                    #Function for checking the user's response to the confirmation prompt
+                    def check(m: discord.Message):
+                        return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() in ["yes", 'y','igen', 'no', 'n', 'nem']
+
+                    try:
+                        msg = await self.bot.wait_for('message', check=check, timeout=60)
+                        if msg.content.lower() not in ["yes", 'y','igen']:
+                            return await ctx.send("🚫 Lejátszási lista hozzáadása megszakítva.")
+
+                    except asyncio.TimeoutError:
+                        return await ctx.send("⏰ Időtúllépés. A lejátszási lista hozzáadása megszakítva.", delete_after=20)
+
+                    added_songs = [{'url': track_name, 'title': track_name}for track_name in spotify_tracks]
+                    queue.extend(added_songs)
+                    await ctx.send(f"✅ **{track_count}** szám hozzáadva a sorhoz a Spotify link alapján.")
+
+                else:
+                    #Single Spotify track handling
+                    spotify_tracks, error = await self.fetch_spotify_tracks(search)
+                    if error:
+                        return await ctx.send(f"❌ Hiba történt a Spotify link feldolgozása közben: {error}", delete_after=20)
+
+                    song_info = {'url': spotify_tracks[0], 'title': spotify_tracks[0]}
+                    queue.append(song_info)
+                    if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+                        await ctx.send(f"✅ **{song_info['title']}** hozzáadva a sorhoz a Spotify link alapján.")
+            
+            #Handle YouTube links and search queries and SoundCloud
+            else:
+                is_url = search.startswith("http://") or search.startswith("https://")
+                query = search if is_url else f"ytsearch:{search}"
+
+                data = await loop.run_in_executor(None, lambda:ytdl_search.extract_info(query, download=False))
+
+                if not data:
+                    return await ctx.send("❌ Nem található a keresett zene.")
+
+                #Playlist Handling
+                if is_url and 'entries' in data and data['entries']:
+                    raw_entries = [e for e in data['entries'] if e]
+                    track_count = len(raw_entries)
+
+                    if track_count == 0:
+                        return await ctx.send("❌ Nem sikerült dalt kinyerni a hivatkozásból.", delete_after=20)
+                    
+                    is_radio = "start_radio=1" in search or "radio=1" in search
+                    link_type = "rádió/mix" if is_radio else "lejátszási lista"
+
+                    await ctx.send(f"❓ Ez a YouTube {link_type} **{track_count}** dalt tartalmaz. Biztosan hozzá akarod adni a sorhoz? Írd be: **yes** vagy **no** (60 másodperced van).")
+
+                    def check(m: discord.Message):
+                        return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() in ['yes', 'y', 'igen', 'no', 'n', 'nem']
+
+                    try:
+                        msg = await self.bot.wait_for('message', check=check, timeout=60)
+                        if msg.content.lower() not in ['yes', 'y', 'igen']:
+                            return await ctx.send(f"🚫 A hozzáadás megszakítva.",delete_after = 20)
+                    except asyncio.TimeoutError:
+                        return await ctx.send(f"⏱️ Időtúllépés! A dalok nem lettek hozzáadva a sorhoz.", delete_after = 20)
+
+                    added_songs = []
+                    for entry in raw_entries:
+                        song_url = entry.get('webpage_url') or entry.get('url') or (f"https://www.youtube.com/watch?v={entry['id']}" if entry.get('id') else None)
+                        title = entry.get('title', 'Ismeretlen cim')
+                        if song_url:
+                            added_songs.append({'url': song_url, 'title': title})
+
+                    queue.extend(added_songs)
+                    await ctx.send(f"✅ Hozzáadva a sorhoz: **{len(added_songs)}** dal.")
+
+                #Simple Tracks and Single URL
+                else:
+                    if not is_url and 'entries' in data and data['entries']:
+                        data = data['entries'][0]
+
+                    song_url = data.get('webpage_url') or data.get('original_url') or search
+                    title = data.get('title', search)
+                    song_info = {'url': song_url, 'title': title}
+                    queue.append(song_info)
+
+                    if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+                        await ctx.send(f"✅ Hozzáadva a sorhoz (**#{len(queue)}**): **{title}**")
+
+            if not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
+                await self.play_next(ctx)
+                    
+
+
+        
 
 
     
