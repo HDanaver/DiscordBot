@@ -63,7 +63,7 @@ class MusicPlayer(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.queues = {}
-        self.loop = False
+        self.loop = {}
         self.currently_playing = {}
 
     #Get the queue for a specific guild, initializing it if it doesn't exist.
@@ -125,6 +125,69 @@ class MusicPlayer(commands.Cog):
             return tracks, None
         except Exception as e:
             return None, f"Hiba történt a Spotify link feldolgozása közben: {e}"
+
+    #Play the next track
+    async def play_next(self, ctx):
+        guild_id = ctx.guild.id
+        queue = self.get_queue(guild_id)
+        is_looped = False
+
+        if self.loop.get(guild_id, False) and guild_id in self.currently_playing:
+            next_track = self.currently_playing[guild_id]
+            is_looped = True
+        elif queue:
+            next_track = queue.pop(0)
+            self.currently_playing[guild_id] = next_track
+        else:
+            self.currently_playing.pop(guild_id, None)
+            await ctx.send("✅ A Queue üres.", delete_after=60)
+            await self.auto_disconnect(ctx)
+            return
+
+        try:
+            webpage_url = next_track.get('url')
+            loop= asyncio.get_running_loop()
+
+            if not webpage_url.startswith('http://') and not webpage_url.startswith('https://'):
+                search_data = await loop.run_in_executor(None, lambda: ytdl_search.extract_info(webpage_url, download=False))
+                if search_data and 'entries' in search_data and search_data['entries']:
+                    first_video = search_data['entries'][0]
+                    webpage_url = first_video.get('webpage_url') or f"https://www.youtube.com/watch?v={first_video.get('id')}"
+                    next_track['title'] = first_video.get('title', next_track['title'])
+
+            data = await loop.run_in_executor(None,lambda: ytdl_stream.extract_info(webpage_url, download=False))
+
+            if 'entries' in data and data['entries']:
+                data = data['entries'][0]
+
+            stream_url = data['url']
+        except Exception as e:
+            print(f"Hiba történt a következő szám lejátszása közben: {e}")
+            await ctx.send(f"❌ Hiba történt a következő szám lejátszása közben: {e}", delete_after=20)
+            await self.play_next(ctx)
+            return
+
+        source = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTIONS)
+
+        ctx.voice_client.play(
+            source,
+            after=lambda e: asyncio.run_coroutine_threadsafe(self.play_next(ctx), self.bot.loop)
+        )
+
+        if not is_looped:
+            await ctx.send(f"🎶 Most szól: **{next_track['title']}**")
+
+    #Making sure the bot is only playing music from the channels that were meant for music, and not from any other channels.
+    async def cog_before_invoke(self,ctx):
+
+        channel_name = ctx.channel.name.lower()
+
+        if "zene" not in channel_name and "music" not in channel_name:
+            await ctx.send("❌ A zene parancsokat csak olyan csatornában használhatod ami zene lejátszására van fenntartva.", delete_after=20)
+            raise commands.CheckFailure("A parancsot nem a megfelelő nevű csatornában hívták meg.")
+
+    
+
 
     
 async def setup(bot):
