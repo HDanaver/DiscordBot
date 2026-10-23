@@ -230,7 +230,7 @@ class MusicPlayer(commands.Cog):
                     except asyncio.TimeoutError:
                         return await ctx.send("⏰ Időtúllépés. A lejátszási lista hozzáadása megszakítva.", delete_after=20)
 
-                    added_songs = [{'url': track_name, 'title': track_name}for track_name in spotify_tracks]
+                    added_songs = [{'url': track_name, 'title': track_name, 'locked': False}for track_name in spotify_tracks]
                     queue.extend(added_songs)
                     await ctx.send(f"✅ **{track_count}** szám hozzáadva a sorhoz a Spotify link alapján.")
 
@@ -240,7 +240,7 @@ class MusicPlayer(commands.Cog):
                     if error:
                         return await ctx.send(f"❌ Hiba történt a Spotify link feldolgozása közben: {error}", delete_after=20)
 
-                    song_info = {'url': spotify_tracks[0], 'title': spotify_tracks[0]}
+                    song_info = {'url': spotify_tracks[0], 'title': spotify_tracks[0], 'locked' : False}
                     queue.append(song_info)
                     if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
                         await ctx.send(f"✅ **{song_info['title']}** hozzáadva a sorhoz a Spotify link alapján.")
@@ -283,7 +283,7 @@ class MusicPlayer(commands.Cog):
                         song_url = entry.get('webpage_url') or entry.get('url') or (f"https://www.youtube.com/watch?v={entry['id']}" if entry.get('id') else None)
                         title = entry.get('title', 'Ismeretlen cim')
                         if song_url:
-                            added_songs.append({'url': song_url, 'title': title})
+                            added_songs.append({'url': song_url, 'title': title, 'locked': False})
 
                     queue.extend(added_songs)
                     await ctx.send(f"✅ Hozzáadva a sorhoz: **{len(added_songs)}** dal.")
@@ -295,7 +295,7 @@ class MusicPlayer(commands.Cog):
 
                     song_url = data.get('webpage_url') or data.get('original_url') or search
                     title = data.get('title', search)
-                    song_info = {'url': song_url, 'title': title}
+                    song_info = {'url': song_url, 'title': title, 'locked': False}
                     queue.append(song_info)
 
                     if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
@@ -383,17 +383,56 @@ class MusicPlayer(commands.Cog):
 
         await ctx.send(embed=embed)
 
+    #Prioritize function
+    @commands.command(name='makefirst', aliases=['mf', 'top'], help= 'Egy már a sorban lévő dalt a sor elejére teszi és zárolja cím alapján.')
+    async def makefirst(self, ctx, *, search_title: str):
+        guild_id = ctx.guild.id
+        queue = self.get_queue(guild_id)
+
+        if not queue:
+            return await ctx.send("❌ A lejátszási sor üres, nincs mit előre tenni.")
+
+        found_song = None
+        found_index = -1
+
+        for i, song in enumerate(queue):
+            if search_title.lower() in song['title'].lower():
+                found_song = song
+                found_index = i
+                break
+
+        if not found_song:
+            return await ctx.send(f"❌ Nem találtam ilyen dalt a sorban: **{search_title}**")
+
+        queue.pop(found_index)
+        
+        found_song['locked']=True
+        
+        queue.insert(0, found_song)
+
+        await ctx.send(f"🔒 **{found_song['title']}** átkerült a lejátszási sor **elejére**, és zárolva lett!")
+
     #Randomize Queue function
     @commands.command(name='shuffle', aliases=['sh','random','r'], help='A lejátszási sor összekeverése')
     async def shuffle(self,ctx):
         guild_id = ctx.guild.id
         queue = self.get_queue(guild_id)
 
-        if not queue:
+
+        if not queue or len(queue) < 2:
             return await ctx.send("❌ A lejátszási sor üres, nincs mit összekeverni.")
 
-        random.shuffle(queue)
+        locked_songs = [song for song in queue if song.get('locked', False)]
+        unlocked_songs = [song for song in queue if not song.get('locked', False)]
+
+        if not unlocked_songs:
+            return await ctx.send("❌ Minden dal zárolva van a sorban, nincs mit keverni.")
+
+        random.shuffle(unlocked_songs)
+        self.queues[guild_id] = locked_songs + unlocked_songs
         await ctx.send("🔀 A lejátszási sor összekeverve!")
+
+    
 
 async def setup(bot):
     await bot.add_cog(MusicPlayer(bot))
