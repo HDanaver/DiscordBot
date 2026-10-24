@@ -11,7 +11,7 @@ class StreamAlert(commands.Cog):
         self.client_secret = os.getenv('TWITCH_CLIENT_SECRET')
 
         self.twitch_username = os.getenv('TWITCH_USERNAME')  # Replace with your Twitch username
-        self.discord_channel_id = os.getenv('ALERT_CHANNEL_ID')  # Replace with your Discord channel ID for stream alerts
+        self.discord_channel_id = int(os.getenv('ALERT_CHANNEL_ID')) if os.getenv('ALERT_CHANNEL_ID') else None  # Replace with your Discord channel ID for stream alerts
 
         self.access_token = None
         self.is_live = False 
