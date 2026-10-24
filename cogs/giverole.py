@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 class GiveRole(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.BASE_ROLE_NAME = os.getenv("Viewer")
+        self.BASE_ROLE_NAME = os.getenv('BASE_ROLE_NAME')
         self.GUILD_ID = int(os.getenv('GUILD_ID')) if os.getenv('GUILD_ID') else None
 
         self.active_password = None
@@ -29,6 +29,7 @@ class GiveRole(commands.Cog):
         guild = self.bot.get_guild(self.GUILD_ID)
         if guild:
             role = discord.utils.get(guild.roles, name=self.BASE_ROLE_NAME)
+            print(role)
             if role:
                 await member.add_roles(role)
 
