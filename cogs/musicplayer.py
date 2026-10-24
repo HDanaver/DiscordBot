@@ -141,7 +141,7 @@ class MusicPlayer(commands.Cog):
             self.currently_playing[guild_id] = next_track
         else:
             self.currently_playing.pop(guild_id, None)
-            await ctx.send("✅ A Queue üres.", delete_after=60)
+            
             await self.auto_disconnect(ctx)
             return
 
